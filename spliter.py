@@ -5,12 +5,12 @@
     # 基本使用（直接打包）
     python spliter.py pack \
         /home/user/input_directory \
-        -o /path/to/output/archive.tar.gz
+        -o /path/to/output/archive
 
     # 打包并分片（每片2GB）
     python spliter.py pack \
         /home/user/input_directory \
-        -o /path/to/output/archive.tar \
+        -o /path/to/output/archive \
         --split \
         -s 2000
 
@@ -40,7 +40,7 @@
     split: 分片文件
     merge: 合并文件
     -s/--chunk-size: 分片大小(MB)，默认1000MB
-    -o/--output: 输出文件/目录
+    -o/--output: 输出文件/目录（打包时不要加.tar.gz后缀）
     --split: 打包时是否同时分片
 
 输出说明：
@@ -52,6 +52,10 @@
        ├── archive_part_ab         # 第2片
        ├── archive_part_ac         # 第3片
        └── split_info.json         # 分片信息文件
+
+注意：
+1. 打包时输出文件路径不要包含.tar.gz后缀，程序会自动添加
+2. 使用--split选项时会同时生成完整的tar.gz文件和分片文件
 """
 
 import os
@@ -152,75 +156,17 @@ def pack_directory(input_dir, output_file, do_split=False, chunk_size_mb=1000):
     
     print(f"开始打包目录: {input_dir}")
     
-    # 获取目录中的所有文件
-    all_files = list(input_dir.rglob("*"))
-    files_to_pack = [f for f in all_files if f.is_file()]
-    
-    # 创建临时目录用于记录进度，使用输入目录名作为临时目录名的一部分
-    temp_dir = output_file.parent / f".pack_temp_{input_dir.name}"
-    temp_dir.mkdir(exist_ok=True, parents=True)
-    progress_file = temp_dir / "progress.json"
-    
-    # 读取已有进度
-    if progress_file.exists():
-        with open(progress_file, "r", encoding="utf-8") as f:
-            packed_files = set(json.load(f))
-    else:
-        packed_files = set()
-    
-    # 使用tar命令打包，添加错误处理
-    with tqdm(total=len(files_to_pack), desc="打包进度") as pbar:
-        for file in files_to_pack:
-            if str(file) not in packed_files:
-                try:
-                    relative_path = file.relative_to(input_dir)
-                    # 使用单引号包裹路径，并对单引号进行转义
-                    escaped_path = str(relative_path).replace("'", "'\\''")
-                    cmd = f"tar -rf {output_file} -C '{input_dir}' '{escaped_path}'"
-                    
-                    # 添加重试机制
-                    max_retries = 3
-                    for retry in range(max_retries):
-                        try:
-                            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                            if result.returncode == 0:
-                                break
-                            else:
-                                print(f"警告: 文件 {relative_path} 打包失败 (尝试 {retry + 1}/{max_retries})")
-                                print(f"错误信息: {result.stderr}")
-                                if retry == max_retries - 1:
-                                    raise Exception(f"文件 {relative_path} 打包失败")
-                        except Exception as e:
-                            if retry == max_retries - 1:
-                                raise
-                            print(f"重试中... ({retry + 1}/{max_retries})")
-                    
-                    packed_files.add(str(file))
-                    # 增量保存进度
-                    with open(progress_file, "w", encoding="utf-8") as f:
-                        json.dump(list(packed_files), f, ensure_ascii=False)
-                except Exception as e:
-                    print(f"警告: 处理文件 {file} 时出错: {str(e)}")
-                    continue
-            pbar.update(1)
-    
-    # 压缩tar文件
-    print("正在压缩文件...")
-    cmd = f"gzip -f {output_file}"
+    # 使用单个tar命令打包整个目录
+    print("正在打包...")
+    cmd = f"tar -czf {output_file}.gz -C '{str(input_dir.parent)}' '{input_dir.name}'"
     subprocess.run(cmd, shell=True)
     
-    # 清理临时文件
-    if temp_dir.exists():
-        import shutil
-        shutil.rmtree(temp_dir)
-    
-    output_gz = Path(str(output_file) + ".gz")
-    print(f"打包完成: {output_gz}")
+    print(f"打包完成: {output_file}.gz")
     
     # 如果需要分片
     if do_split:
         print("开始分片...")
-        split_large_file(output_gz, chunk_size_mb)
+        split_large_file(f"{output_file}.gz", chunk_size_mb)
 
 def main():
     parser = argparse.ArgumentParser(description="大文件分片与合并工具")
